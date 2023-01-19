@@ -409,7 +409,7 @@ private val dataUpdateBinder: IDataUpdate.Stub  = object : IDataUpdate.Stub(){
 
 客户端和服务端之间为AIDL，AIDL的内部调用在红色边框内部，也是简洁明了。
 
-实际上客户端和服务端的调用就是操作Parcel数据，这个是一种共享内存，即客户端和服务端可以抽象成虚线所示的调用关系。
+实际上客户端和服务端的调用就是操作Parcel数据，这个是一种**共享内存**，即客户端和服务端可以抽象成虚线所示的调用关系。绿色部分为客户端进程，蓝色部分为服务端进程，红色部分为AIDL的流程部分。
 
 {{< image classes="fancybox center fig-100" src="/aidl/aidl2_4.png" thumbnail="/aidl/aidl2_4.png" title="AIDL客户端和服务端的调用图">}}
 

@@ -8,14 +8,13 @@ metaAlignment: center
 coverMeta: out
 draft: true
 categories:
-- Handler
+- ThreadLocal
 - 2021
 - November
 tags:
 - Android
 - 源码
 - framework
-- ThreadLocal
 - Thread
 showSocial: false
 ---
@@ -725,13 +724,90 @@ remove方法相对于getEntry和set方法比较简单，直接在table中找key�
 
 这边的逻辑其实只有在k == key的时候才做清理，其他k != key，k == null的时候继续下移一个，直到遇到null Entry退出。
 
+# 补充
 
+关于ThreadLocal匿名方式获取value
+
+通常来说，如果没有初始化一个ThreadLocal的时候没有set过类型，直接获取，返回的是一个空的value，如下图所示。
+
+{{< image classes="fancybox center fig-100" src="/ThreadLocal/threadlocal_31.png" thumbnail="/ThreadLocal/threadlocal_31.png" title="">}}
+
+**但是通过匿名函数的写法，复写initialValue方法，可以使得value不为null。**
+
+以Choreographer.java源码中的实例说明
+
+```java
+//frameworks/base/core/java/android/view/Choreographer.java#getInstance
+public static Choreographer getInstance() {
+    return sThreadInstance.get();
+}
+
+// Thread local storage for the choreographer.
+private static final ThreadLocal<Choreographer> sThreadInstance =
+    new ThreadLocal<Choreographer>() {
+    @Override
+    protected Choreographer initialValue() {
+        Looper looper = Looper.myLooper();
+        if (looper == null) {
+            throw new IllegalStateException("The current thread must have a looper!");
+        }
+        Choreographer choreographer = new Choreographer(looper, VSYNC_SOURCE_APP);
+        if (looper == Looper.getMainLooper()) {
+            mMainInstance = choreographer;
+        }
+        return choreographer;
+    }
+};
+```
+
+其中在get过程中，通过上文的分析可知，匿名内部类复写setInitialValue。在匿名内部类中定义一个value，那么实际的value就不为null，如下图所示。
+
+```java
+//返回当前线程的 this 局部变量map保存的线程副本值
+//如果没有找到该线程副本，返回线程本地的当前线程值
+public T get() {
+    Thread t = Thread.currentThread();
+    ThreadLocalMap map = getMap(t);
+    if (map != null) {
+        ThreadLocalMap.Entry e = map.getEntry(this);
+        if (e != null) {
+            @SuppressWarnings("unchecked")
+            T result = (T)e.value;
+            return result;
+        }
+    }
+    return setInitialValue();
+}
+
+//初始化，这个方法会覆写原来的set
+private T setInitialValue() {
+    T value = initialValue();
+    Thread t = Thread.currentThread();
+    ThreadLocalMap map = getMap(t);
+    if (map != null)
+        map.set(this, value);
+    else
+        createMap(t, value);
+    return value;
+}
+
+//每个线程只有一次，跟remove配套使用，可供子类覆写，这里的匿名内部类复写了
+protected T initialValue() {
+    return null;
+}
+```
+
+{{< image classes="fancybox center fig-100" src="/ThreadLocal/threadlocal_32.png" thumbnail="/ThreadLocal/threadlocal_32.png" title="">}}
 
 # 总结
 
 整体的Threadlocal源码解析分析完了，主要是更加直观清晰的了解到ThreadLocal的组成部分和数据结构。接下来，会有Threadlocal的具体用途，尽请期待。
 
 
+
+# 猜你喜欢
+
+[ThreadLocal之子父线程的恩爱情仇](https://yangyang48.github.io/2022/04/threadlocal%E4%B9%8B%E5%AD%90%E7%88%B6%E7%BA%BF%E7%A8%8B%E7%9A%84%E6%81%A9%E7%88%B1%E6%83%85%E4%BB%87/)
 
 # 参考
 
