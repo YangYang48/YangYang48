@@ -17,7 +17,12 @@
           {{ end }}
 		  <!--添加卜算子阅读访问量功能-->
 		  <h5 id="wc" style="font-size: 1rem;text-align: center;">{{ .FuzzyWordCount }} Words|Read in about {{ .ReadingTime }} Min|本文总阅读量<span id="busuanzi_value_page_pv"></span>次</h5>
-		  
+      <!--{{ if not .Params.notoc }}
+        <div id="toc" class="well col-md-4 col-sm-6">
+        {{ .TableOfContents }}
+		{{ partial "toc.html" . }}
+        </div>
+      {{ end }}-->
           <div class="post-content markdown" itemprop="articleBody">
             <div class="main-content-wrap">
               {{ (replaceRE "<!--\\s*[t|T][o|O][c|C]\\s*-->" (printf "<h1 id=\"table-of-contents\">%s</h1>%s" (i18n "post.toc") .TableOfContents) .Content) | safeHTML }}

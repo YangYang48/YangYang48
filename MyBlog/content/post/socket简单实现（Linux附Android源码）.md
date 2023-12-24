@@ -33,7 +33,9 @@ socket是一类接口，在Linux中，一切皆为文件，socket亦然。因此
 
 # 2 socket用法
 
-为创建一个套接字，调用socket函数。
+为创建一个套接字，调用socket函数
+
+## 2.1函数原型
 
 ```c++
 #include <sys/types.h>          /* See NOTES */
@@ -42,21 +44,677 @@ socket是一类接口，在Linux中，一切皆为文件，socket亦然。因此
 int socket(int domain, int type, int protocol);
 ```
 
+## 2.2 描述
+
+socket()为通信创建一个端点并返回一个描述符。
+
+### 2.2.1第一个参数
+
+domain参数指定通信域;这将选择用于通信的协议族。这些族定义在<sys/socket.h>中。目前理解的格式包括
+
+|       Name        |       Purpose        |  Man page  |
+| :---------------: | :------------------: | :--------: |
+| AF_UNIX, AF_LOCAL |       本地通信       |  unix(7)   |
+|      AF_INET      |   IPv4网络通信协议   |   ip(7)    |
+|     AF_INET6      |   IPv6网络通信协议   |  ipv6(7)   |
+|      AF_IPX       | IPX - Novell专用协议 |            |
+|    AF_NETLINK     | 内核用户界面设备通信 | netlink(7) |
+|     AF_PACKET     |   低层分组接口通信   | packet(7)  |
+
+### 2.2.2第二个参数
+
+套接字具有指定的类型，该类型指定通信语义。当前定义的类型有
+
+|      类型      |                             含义                             |
+| :------------: | :----------------------------------------------------------: |
+|  SOCK_STREAM   | （**TCP**）提供有序的、可靠的、双向的、基于连接的字节流。可以支持带外数据传输机制。 |
+|   SOCK_DGRAM   |  （**UDP**）支持数据报(无连接，固定最大长度的不可靠消息)。   |
+| SOCK_SEQPACKET | 为固定最大长度的数据报提供一个有序的、可靠的、基于双向连接的数据传输路径<br />消费者在每次输入系统调用时都需要读取整个数据包。 |
+|    SOCK_RAW    |                    提供原始网络协议访问。                    |
+|    SOCK_RDM    |              提供一个不保证排序的可靠数据报层。              |
+
+从Linux 2.6.27开始，type参数还有第二个用途:除了指定套接字类型外，它还可以包括按位的修改socket()的行为
+
+> - **SOCK_NONBLOCK**
+>
+>   在新打开的文件描述中设置`O_NONBLOCK`文件状态标志。使用这个标志可以节省对`fcntl(2)`的额外调用，以达到相同的结果。
+>
+> - **SOCK_CLOEXEC**
+>
+>   在进程执行exec系统调用时关闭此打开的文件描述符。在子进程没有相应权限的情况下，防止父进程将打开的文件描述符泄露给子进程，防止子进程间接获得权限。
+
+### 2.2.3第三个参数
+
+协议指定了套接字使用的特定协议。在给定的协议族中，通常只有一个协议支持特定的套接字类型，在这种情况下，protocol可以指定为0。然而，可能存在许多协议，在这种情况下，必须以这种方式指定特定的协议。要使用的协议号是特定于将要发生通信的“通信域”的;看到协议(5)。关于如何将协议名字符串映射到协议号，请参见getprotoent(3)。
+
+**1）SOCK_STREAM**
+
+这个类型的套接字是**全双工字节流**。它们不保留记录边界。流套接字在发送或接收任何数据之前必须处于连接状态。到另一个套接字的连接是通过`connect(2)`调用创建的。一旦连接，数据可以使用`read(2)`和`write(2)`调用或`send(2)`和`recv(2)`调用的一些变体来传输。当一个会话完成时，可以执行`close(2)`。带外数据也可以像send(2)中描述的那样传输，并像recv(2)中描述的那样接收。
+
+实现SOCK_STREAM的通信协议**确保数据不会丢失或重复**。如果对端协议有缓冲空间的一段数据不能在合理的时间内成功传输，则认为该连接已经死亡。当在套接字上启用SO_KEEPALIVE时，协议以特定于协议的方式检查另一端是否仍然活跃。如果进程在中断的流上发送或接收，则引发SIGPIPE信号;这将导致不处理信号的naive进程退出。
+
+**2）SOCK_SEQPACKET**
+
+这个套接字使用与SOCK_STREAM套接字**相同的系统调用**。唯一的区别是read(2)调用将只返回所请求的数据量，而到达数据包中剩余的任何数据将被丢弃。此外，传入数据报中的所有消息边界都被保留。
+
+**3）SOCK_DGRAM和SOCK_RAW**
+
+这两个套接字允许向**sendto(2)**调用中命名的通讯员发送数据报。数据报通常使用**recvfrom(2)**接收，它返回下一个数据报及其发送者的地址。
+
+fcntl(2) F_SETOWN操作可用于指定进程或进程组在带外数据到达时接收SIGURG信号或在SOCK_STREAM连接意外中断时接收SIGPIPE信号。该操作还可用于设置通过SIGIO接收I/O和I/O事件异步通知的进程或进程组。使用F_SETOWN相当于使用FIOSETOWN或SIOCSPGRP参数进行ioctl(2)调用。
+
+**4）其他**
+
+套接字的操作由套接字级别的选项控制中定义了这些选项。函数**setsockopt(2)**和**getsockopt(2)**分别用于设置和获取选项。
+
+关于**setsockopt**，具体可以点击[这里](https://baike.baidu.com/item/setsockopt/10069288?fr=aladdin)。
+
+> setsockopt
+>
+> ```c++
+> #include <sys/types.h>
+> #include <sys/socket.h>
+> int setsockopt(int sockfd, int level, int optname,const void *optval, socklen_t optlen);
+> ```
+>
+> 1. **sockfd**：标识一个套接口的描述字。
+> 2. **level**：选项定义的层次；支持**SOL_SOCKET**、IPPROTO_TCP、IPPROTO_IP和IPPROTO_IPV6。
+> 3. **optname**：需设置的选项。
+> 4. **optval**：指针，指向存放选项待设置的新值的缓冲区。
+> 5. **optlen：optval**缓冲区长度。
+>
+> ```c++
+> optname定义如下：
+>  
+> #define SO_DEBUG 1            -- 打开或关闭调试信息（BOOL）
+> #define SO_REUSEADDR 2        -- 打开或关闭地址复用功能（BOOL）
+> #define SO_TYPE 3             -- 
+> #define SO_ERROR 4
+> #define SO_DONTROUTE 5		  -- 禁止选径；直接传送。（BOOL）
+> #define SO_BROADCAST 6		  -- 允许套接口传送广播信息（BOOL）
+> #define SO_SNDBUF 7           -- 设置发送缓冲区的大小（int）
+> #define SO_RCVBUF 8           -- 设置接收缓冲区的大小（int）
+> #define SO_KEEPALIVE 9        -- 套接字保活（BOOL）
+> #define SO_OOBINLINE 10		  -- 在常规数据流中接收带外数据（BOOL）
+> #define SO_NO_CHECK 11
+> #define SO_PRIORITY 12        -- 设置在套接字发送的所有包的协议定义优先权
+> #define SO_LINGER 13		  -- 如关闭时有未发送数据，则逗留（struct linger FAR*）
+> #define SO_BSDCOMPAT 14
+> #define SO_REUSEPORT 15
+> #define SO_PASSCRED 16
+> #define SO_PEERCRED 17
+> #define SO_RCVLOWAT 18
+> #define SO_SNDLOWAT 19
+> #define SO_RCVTIMEO 20       -- 设置接收超时时间
+> #define SO_SNDTIMEO 21       -- 设置发送超时时间
+> #define SO_ACCEPTCONN 30
+> #define SO_SNDBUFFORCE 32
+> #define SO_RCVBUFFORCE 33
+> #define SO_PROTOCOL 38
+> #define SO_DOMAIN 39
+> ```
+>
+> 举例说明
+>
+> ```c++
+> BOOL bReuseaddr = TRUE;
+> setsockopt( s, SOL_SOCKET, SO_REUSEADDR, ( const char* )&bReuseaddr, sizeof( BOOL ) );
+> ```
+
+### 2.2.4sock协议族
+
+关于**socketaddr**，**sockaddr_un**和**sockaddr_in**的关系和区别
+
+**1）socketaddr**
+
+基本地址结构，本身没有意义，仅用于泛型化参数，结构体总共16个字节
+
+```c++
+typedef unsigned short sa_family_t;
+
+struct sockaddr
+{
+    sa_family_t  sa_family;//地址族
+    char   sa_data[14];//地址值
+};
+```
+
+**2）sockaddr_un**
+
+本地地址结构，用于**AF_LOCAL/AF_UNIX**域的本地通信，，结构体总共110个字节
+
+```c++
+struct sockaddr_un
+{
+    sa_family_t  sun_family;//地址族(AF_LOCAL/AF_UNIX)
+    char   sun_path[108];//本地套接字文件的路径，通常路径字符串不能超过108
+};
+```
+
+**3）sockaddr_in**
+
+网络地址结构，用于**AF_INET**域的IPv4网络通信，结构体总共16个字节
+
+```c++
+typedef uint16_t in_port_t;//无符号16位整数
+typedef uint32_t in_addr_t;//无符号32位整数
+
+struct  in_addr
+{
+    in_addr_t   s_addr;
+};
+
+struct sockaddr_in
+{
+    sa_family_t sin_family;//地址族(AF_INET)
+    int_port_t  sin_port;//端口号（0~65535）
+    struct   in_addr    sin_addr;//IP地址
+    unsigned char sin_zero[8];//在linux中会有填充字段，sin_zero[8],全部置为0
+};
+```
+
+
+
+### 2.2.5demo
+
+#### 2.2.5.1基于TCP协议的demo
+
 
 
 {{< image classes="fancybox center fig-100" src="/socket/socket_7.png" thumbnail="/socket/socket_7.png" title="">}}
 
-关于socket中的send和write的区别
+##### 2.2.5.1.1服务端
 
-> 对于linux来说,每个socket会有自己的send/receive buffer。调用write,只是说将用户进程的数据,拷贝到了内核的socket buffer里面,拷贝完之后,就没有write什么事了。内核自己会用自己的进程,调用TCP/IP协议栈,把用户进程的数据发出去。可以把内核的TCP/IP协议想象成另外一个进程,调用write的时候,只是把数据发给这个进程,这个进程会处理剩下的事情。
+```c++
+//基于tcp协议的服务器
+#include<stdio.h>
+#include<stdlib.h>
+#include<unistd.h>
+#include<string.h>
+#include<sys/socket.h>
+#include<sys/types.h>
+#include<arpa/inet.h>
+#include<ctype.h>
+#include<errno.h>
+#include<signal.h>
+#include<sys/wait.h>
+//信号处理函数
+void sigchild(int signum)
+{
+    for(;;)
+    {
+        pid_t pid = waitpid(-1,NULL,WNOHANG);//非阻塞方式回收子进程
+        if(pid == -1)
+        {
+            if(errno == ECHILD)
+            {
+                printf("没有子进程可回收\n");
+                break;
+            }
+            else
+            {
+                perror("waitpid");
+                exit(-1);
+            }
+        }
+        else if(pid == 0)
+        {
+            printf("子进程在运行，没法收\n");
+            break;
+        }
+        else
+        {
+            printf("回收%d进程僵尸\n",getpid());
+        }
+    }
+}
+ 
+int main(void)
+{
+    //捕获17号信号
+    if(signal(SIGCHLD,sigchild) == SIG_ERR)
+    {
+        perror("signal");
+        return -1;
+    }
+    //创建侦听套接字
+    printf("服务器：创建套接字\n");
+    int sockfd = socket(AF_INET,SOCK_STREAM,0);//返回侦听套接字
+    if(sockfd == -1)
+    {
+        perror("socket");
+        return -1;
+    }
+    printf("sockfd:%d\n",sockfd);
+    //组织地址结构，代表服务器
+    printf("服务器：组织地址结构\n");
+    struct sockaddr_in ser;
+    ser.sin_family = AF_INET;
+    ser.sin_port = htons(8888);//注意大小端问题，存是小端，服务器大端方式拿。
+    //ser.sin_addr.s_addr = inet_addr("127.0.0.1")
+    ser.sin_addr.s_addr = INADDR_ANY;//表示接受任意IP下的地址
+    //绑定套接字和地址结构
+    printf("服务器：绑定套接字和地址结构\n");
+    int sockbind = bind(sockfd,(struct sockaddr*)&ser,sizeof(ser));
+    if(sockbind == -1)
+    {
+        perror("bind");
+        return -1;
+    }
+    //开启侦听功能
+    printf("服务器：开启侦听功能\n");
+    int socklisten = listen(sockfd,1024);
+    if(socklisten == -1)
+    {
+        perror("listen");
+        return -1;
+    }
+    //等待并接收客户端连接
+    for(;;)
+    {   //父进程负责和客户端建立通信
+        printf("服务器：等待并接收客户端连接\n");
+        struct sockaddr_in cli;//用来输出客户端的地址结构
+        socklen_t len = sizeof(cli);
+        int conn = accept(sockfd,(struct sockaddr*)&cli,&len);//返回后续用来通信的通信套接字
+        if(conn == -1)
+        {
+            perror("accept");
+            return -1;
+        }
+        printf("服务器：接收到%s:%hu的客户端\n",inet_ntoa(cli.sin_addr),ntohs(cli.sin_port));
+        //子进程负责和客户端通信
+        pid_t pid = fork();
+        if(pid == -1)
+        {
+            perror("fork");
+            return -1;
+        }
+        if(pid == 0)
+        {
+            close(sockfd);//子进程不用侦听套接字，关闭
+            //业务处里（接发数据）
+            printf("服务器：接发数据\n");
+            //接收客户端发来的小写的串
+            while(1)
+            {
+                char buf[128] = {};
+                ssize_t size = read(conn,buf,sizeof(buf) - sizeof(buf[0]));
+                if(size == -1)
+                {
+                    perror("read");
+                    return -1;
+                }
+                if(size == 0)
+                {
+                    printf("服务端：客户端断开连接\n");
+                    break;
+                }
+                for(int i = 0; i < size; i++)
+                {
+                    //转换大写
+                    buf[i] = toupper(buf[i]);
+                }
+                //发送给客户端
+                if(write(conn,buf,size) ==-1)
+                {
+                    perror("write");
+                    return -1;
+                }
+            }
+            //关闭套接字
+            printf("服务器：关闭套接字\n");
+            close(conn);
+            return 0;
+        }
+        close(conn);//父进程关闭通信套接字
+    }
+    close(sockfd);
+    return 0;
+}
+```
 
-socket_write写到缓冲(本地[套接字](https://so.csdn.net/so/search?q=套接字&spm=1001.2101.3001.7020)缓冲) 实际有可能未发送出去
+##### 2.2.5.1.2客户端
 
-socket_send 已经从套接字缓冲发出
+```c++
+//基于TCP协议的客户端
+#include<stdio.h>
+#include<unistd.h>
+#include<string.h>
+#include<sys/socket.h>
+#include<sys/types.h>
+#include<arpa/inet.h>
+ 
+int main()
+{
+    //创建服务器套接字
+    printf("客户端：创建套接字\n");
+    int sockfd = socket(AF_INET,SOCK_STREAM,0);
+    if(sockfd ==-1)
+    {
+        perror("socket");
+        return -1;
+    }
+    //组织服务器的地址结构
+    printf("客户端：组织服务器的地址结构\n");
+    struct sockaddr_in ser;
+    ser.sin_family = AF_INET;
+    ser.sin_port = htons(8888);
+    ser.sin_addr.s_addr = inet_addr("127.0.0.1");//不能像服务器宏一样
+    //发起连接
+    printf("客户端：发起连接\n");
+    if(connect(sockfd,(struct sockaddr*)&ser,sizeof(ser)) == -1 )
+    {
+        perror("connect");
+        return -1;
+    } 
+    //业务处理
+    printf("客户端：业务处理\n");
+    for(;;)
+    {
+        char buf[128] = {};
+        fgets(buf,sizeof(buf),stdin);
+        //循环退出条件
+        if(strcmp(buf,"!\n") == 0)
+        {
+            break;
+        }
+        //将小写传发送给服务器
+        if(send(sockfd,buf,strlen(buf),0) == -1 )
+        {
+            perror("send");
+            return -1;
+        }
+ 
+        //接收服务器回传的大写的串
+        if(recv(sockfd,buf,sizeof(buf) - sizeof(buf[0]),0) == -1)
+        {
+            perror("recv");
+            return -1;
+        }
+        printf(">>%s",buf);
+    }
+    //关闭套接字
+    printf("客户端：关闭套接字\n");
+    close(sockfd);
+}
+```
+
+#### 2.2.5.2基于UDP协议的demo
+
+{{< image classes="fancybox center fig-100" src="/socket/socket_linux_9.png" thumbnail="/socket/socket_linux_9.png" title="">}}
+
+##### 2.2.5.2.1服务端
+
+```c++
+//基于UDP的服务器
+#include<stdio.h>
+#include<unistd.h>
+#include<ctype.h>
+#include<sys/socket.h>
+#include<arpa/inet.h>
+#include<sys/types.h>
+ 
+int main()
+{
+    //创建套接字
+    printf("服务器：创建套接字\n");
+    int sockfd = socket(PF_INET,SOCK_DGRAM,0);
+    if(sockfd == -1)
+    {
+        perror("socket");
+        return -1;
+    }
+    //组织地址结构
+    printf("服务器：组织地址结构\n");
+    struct sockaddr_in ser;
+    ser.sin_family = AF_INET;
+    ser.sin_port = htons(9999);
+    ser.sin_addr.s_addr = INADDR_ANY;//接受任意IP地址数据
+    //绑定套接字和地址结构
+    printf("服务器：绑定套接字和地址结构\n");
+    if(bind(sockfd,(struct sockaddr *)&ser,sizeof(ser)) == -1)
+    {
+        perror("bind");
+        return -1;
+    }
+    //处理数据
+    printf("服务器：处理数据\n");
+    while(1)
+    {
+        //接收客户端的串
+        char buf[128] = {};
+        struct sockaddr_in cli;//用来输出客户端的地址结构
+        socklen_t len = sizeof(cli);
+        ssize_t size = recvfrom(sockfd,buf,sizeof(buf)-sizeof(buf[0]),0,(struct sockaddr*)&cli,&len);
+        if(size == -1)
+        {
+            perror("recvfrom");
+            return -1;
+        }
+        //转成大写
+        for(int i = 0;i < size;i++)
+        {
+            buf[i] = toupper(buf[i]);
+        }
+        //发送客户端
+        if(sendto(sockfd,buf,size,0,(struct sockaddr *)&cli,len) == -1)
+        {
+            perror("sendto");
+            return -1;
+        }
+    }
+    //关闭套接字
+    printf("服务器：关闭套接字\n");
+    close(sockfd);
+    return 0;
+}
+```
+
+##### 2.2.5.2.2客户端
+
+```c++
+//客户端
+#include<stdio.h>
+#include<unistd.h>
+#include<sys/socket.h>
+#include<string.h>
+#include<sys/types.h>
+#include<arpa/inet.h>
+ 
+int main()
+{
+    //创建套接字
+    printf("客户端：创建套接字\n");
+    int sockfd = socket(PF_INET,SOCK_DGRAM,0);
+    if(sockfd == -1)
+    {
+        perror("socket");
+        return -1;
+    }
+    //组织服务器地址结构
+    printf("客户端：组织地址结构\n");
+    struct sockaddr_in ser;
+    ser.sin_family = PF_INET;
+    ser.sin_port = htons(9999);
+    ser.sin_addr.s_addr = inet_addr("127.0.0.1");
+    //数据处理
+    printf("客户端：数据处理\n");
+    for(;;)
+    {
+        //通过键盘获取小写的串
+        char buf[128] = {};
+        fgets(buf,sizeof(buf),stdin);
+        //循环退出条件
+        if(strcmp(buf,"!\n") == 0)
+        {
+            break;
+        }
+ 
+        //发送给服务器
+        if(sendto(sockfd,buf,strlen(buf),0,(struct sockaddr*)&ser,sizeof(ser)) == -1)
+        {
+            perror("sendto");
+            return -1;
+        }
+        //接收服务器发送回来的大写的串
+        if(recv(sockfd,buf,sizeof(buf)-sizeof(buf[0]),0) == -1)
+        {
+            perror("recv");
+            return -1;
+        }
+        //打印输出
+        printf("%s\n",buf);
+    }
+    //关闭套接字
+    close(sockfd);
+    return 0;
+}
+```
 
 
 
 
+
+### 2.2.6socket一些补充
+
+本文篇幅有限，主要做一个大致的介绍，具体内容还需要查看**《UNIX环境高级编程手册》**
+
+#### 2.2.6.1关于socket中的write和send的区别
+
+> ```c
+> ssize_t write(int fd, const void*buf,size_t nbytes);
+> 
+> #include <sys/types.h>
+> #include <sys/socket.h>
+> ssize_t send(int sockfd, const void *buf, size_t len, int flags);
+> ```
+>
+> 尽管可以通过read和write交换数据，但这就是这两个函数所能做的一切。如果想指定选项，从多个客户端接收数据包，或者发送带外数据，就需要使用6个为数据传递而设计的套接字函数中的一个。3个函数用来发送数据，3个用于接收数据。最简单的是**send**，它和write很像，但是可以指定标志来改变处理传输数据的方式。**即send()和write之间的唯一区别是是否存在标志。使用零标志参数，send()等效于write**。
+>
+> 类似write，使用send时套接字必须已经连接。参数buf和nbytes的含义与write中的一致。
+> 然而，与write不同的是，send支持第4个参数args。
+>
+> |      flags      | 含义                                                         |
+> | :-------------: | ------------------------------------------------------------ |
+> | `MSG_CONFIRM `  | 告诉链接层:你从另一端得到了一个成功的回复。如果链路层没有得到这一点，它将定期重新探测邻居(例如，通过单播ARP)。仅对`SOCK_DGRAM`和`SOCK_RAW`套接字有效，目前仅对`IPv4`和`IPv6`实现。 |
+> | `MSG_DONTROUTE` | 不要使用网关发送数据包，只发送到直连网络上的主机。这通常**只被诊断程序或路由程序使用**。 |
+> | `MSG_DONTWAIT`  | **启用非阻塞操作**;如果操作将阻塞，则返回`EAGAIN`或`EWOULDBLOCK`。这提供了**类似于设置`O_NONBLOCK`**标志的行为(通过`fcntl(2) F_SETFL`操作)，但不同之处在于`MSG_DONTWAIT`是每个调用的选项，而`O_NONBLOCK`是对打开的文件描述的设置(参见`open(2)`)，这将影响调用进程中的所有线程，以及其他持有引用相同打开文件描述的文件描述符的进程。 |
+> |    `MSG_EOR`    | **终止一条记录**(当支持此概念时，例如`SOCK_SEQPACKET`类型的套接字)。 |
+> |   `MSG_MORE `   | **调用方有更多数据要发送**。此标志用于`TCP`套接字以获得与`TCP_CORK`套接字选项相同的效果(参见`TCP(7)`)，不同的是此标志可以在每次调用的基础上设置。<br />自Linux 2.6以来，这个标志也支持`UDP`套接字，并通知内核将所有在调用中发送的数据打包成一个单一的数据报，该数据报仅在执行不指定此标志的调用时传输。(请参见`udp(7)`中描述的`UDP_CORK`套接字选项。) |
+> | `MSG_NOSIGNAL`  | 如果对等端在面向流的套接字上关闭了连接，则**不要生成`SIGPIPE`信号**。仍然返回`EPIPE`错误。这提供了**类似于使用`sigaction(2)`忽略`SIGPIPE`的行为**，但是，`MSG_NOSIGNAL`是每个调用的特性，忽略`SIGPIPE`会设置一个影响进程中所有线程的进程属性。 |
+> |    `MSG_OOB`    | 在支持此概念的套接字(例如`SOCK_STREAM`类型)上**发送带外数据**;底层协议还必须支持带外数据。**紧急消息，会优先处理**。 |
+
+
+
+#### 2.2.6.2关于socket中的write和writev的区别
+
+> ```c
+> #include <sys/uio.h>
+> struct iovec {
+>     void  *iov_base;    /* Starting address */
+>     size_t iov_len;     /* Number of bytes to transfer */
+> };
+> ssize_t writev(int fd, const struct iovec *iov, int iovcnt);
+> ```
+>
+> writev 函数的功能可概括为：对数据进行整合接收及发送的函数。也就是说，通过 writev 函数可以将分散保存在多个缓冲中的数据一并发送，通过 readv 函数可以由多个缓冲分别接收。writev()在继续到iov[1]之前写出iov[0]的全部内容，writev()执行的数据传输是**原子**的。因此，**适当使用这两个函数可以减少 I/O 函数的调用次数**。
+>
+> {{< image classes="fancybox center fig-100" src="/socket/socket_linux_10.png" thumbnail="/socket/socket_linux_10.png" title="writev函数结构图">}}
+>
+> **write和writev区别**
+>
+> 对于socket IO而言，write经常不能够一次写完，好在它会返回已经写了多少字节，如果继续写，此时就会阻塞；对于非阻塞socket而言，write会在buf不可写时返回的EAGAIN，那么在下一次write时，便可通过之前返回的值重新确定基址和长度。
+>
+> manual中对于writev的相关描述为：和write类似。也就是说，它也会返回已经写入的长度或者EAGAIN(errno)。千万不可天真地认为，每次传同样的iovec就能解决问题，writev并不会为你做任何事情，重新处理iovec是调用者的任务。
+>
+> 问题是，这个返回值“实用性”并不高，因为参数传入的是iovec数组，计量单位是iovcnt，而不是字节数，用户依旧需要通过遍历iovec来计算新的基址，另外写入数据的“结束点”可能位于一个iovec的中间某个位置，因此需要调整临界iovec的io_base和io_len。
+>
+> 对于socket，尤其是**非阻塞socket**，还是**尽可能避免writev**的好，实现连续的内存块反而可以简化实现。
+
+#### 2.2.6.3关于socket中recvmsg 和 sendmsg 函数
+
+具体内容可以点击[这里](https://www.cnblogs.com/jimodetiantang/p/9190958.html)
+
+> ```c++
+> #include <sys/types.h>
+> #include <sys/socket.h>
+> 
+> ssize_t send(int sockfd, const void *buf, size_t len, int flags);
+> 
+> ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+>               const struct sockaddr *dest_addr, socklen_t addrlen);
+> 
+> ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags);
+> ```
+>
+> 主要是有两个结构体**msghdr**和**cmsghdr**。
+>
+> 这两个函数的参数中都有一个指向msghdr结构的指针，该结构包含了所有关于要发送或要接收的消息的信息。该结构的定义大致如下：
+>
+> ```c++
+> struct msghdr {
+>     void          *msg_name;        // protocol address
+>     socklen_t      msg_namelen;     // size of protocol address
+>     struct iovec  *msg_iov;         // scatter/gather array
+>     int            msg_iovlen;      // elements in msg_iov
+>     void          *msg_control;     // ancillary data (cmsghdr struct)
+>     socklen_t      msg_controllen;  // length of ancillary data
+>     int            msg_flags;       // flags returned by recvmsg()
+> };
+> 
+> struct cmsghdr {
+>     size_t cmsg_len;
+>     int cmsg_level;
+>     int cmsg_type;
+> };
+> ```
+>
+> 另外还有几个宏定义用于上面结构体的计算
+>
+> ```c++
+> #define CMSG_NXTHDR(mhdr, cmsg) __cmsg_nxthdr((mhdr), (cmsg))
+> #define CMSG_ALIGN(len) ( ((len)+sizeof(long)-1) & ~(sizeof(long)-1) )
+> #define CMSG_DATA(cmsg) (((unsigned char*)(cmsg) + CMSG_ALIGN(sizeof(struct cmsghdr))))
+> #define CMSG_SPACE(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))
+> #define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+> #define CMSG_FIRSTHDR(msg) \
+>        ((msg)->msg_controllen >= sizeof(struct cmsghdr) \
+>        ? (struct cmsghdr*) (msg)->msg_control : (struct cmsghdr*) NULL)
+> #define CMSG_OK(mhdr, cmsg) ((cmsg)->cmsg_len >= sizeof(struct cmsghdr) &&   (cmsg)->cmsg_len <=   (unsigned long)   ((mhdr)->msg_controllen -   ((char*)(cmsg) - (char*)(mhdr)->msg_control)))
+> ```
+>
+> 关于结构体**msghdr**
+>
+> {{< image classes="fancybox center fig-100" src="/socket/socket_linux_7.png" thumbnail="/socket/socket_linux_7.png" title="">}}
+>
+> 关于结构体**msghdr**和**cmsghdr**联系
+>
+> {{< image classes="fancybox center fig-100" src="/socket/socket_linux_8.png" thumbnail="/socket/socket_linux_8.png" title="">}}
+>
+> **send，sendto和sendmsg区别**
+>
+> **即使send成功返回，也并不表示连接的另一端的进程就一定接收了数据**。我们所能保证的只是当send成功返回时，数据已经被无错误地发送到网络驱动程序上。当消息没有放入套接字的发送缓冲区时，**send()通常会阻塞，除非套接字已被置于非阻塞I/O模式**。在非阻塞模式下，它会失败，在这种情况下会出现EAGAIN或EWOULDBLOCK错误。
+>
+> 对于支持报文边界的协议，如果尝试发送的单个报文的长度超过协议所支持的最大长度，那么send会失败，并将errno设为EMSGSIZE。对于字节流协议，send会阻塞直到整个数据传输完成。函数sendto和send很类似。区别在于sendto可以在无连接的套接字上指定一个目标地址。
+>
+> 对于面向连接的套接字，目标地址是被忽略的，因为连接中隐含了目标地址。对于无连接的套接字，除非先调用connect设置了目标地址，否则不能使用send。sendto提供了发送报文的另一种方式。
+>
+> 通过套接字发送数据时，还有一个选择。可以调用带有msghdr结构的sendmsg来指定多重缓冲区传输数据，这和writev函数很相似。sendmsg()调用还允许发送辅助数据(也称为控制信息)。
+>
+> ```c
+> //下面两种方式一致
+> send(sockfd, buf, len, flags);
+> sendto(sockfd, buf, len, flags, NULL, 0);
+> ```
+>
+> 如果sendto()用于**连接模式套接字(SOCK_STREAM, SOCK_SEQPACKET)**，则参数dest_addr和addrlen将被**忽略**(当它们不为NULL和0时可能返回EISCONN错误)，并且当套接字未实际连接时返回错误ENOTCONN。否则，目标的地址由dest_addr给出，addrlen指定其大小。对于sendmsg()，目标地址由msg给出。Msg_name，加上msg。msg_namelen指定它的大小。
+>
+
+#### 2.2.6.4socket发送函数总结
+
+应用层的五个发送函数，实际上对应系统调用最终都回到sock_sendmsg，即把应用层的数据封装成msghdr，然后继续发送到协议栈。write可以看作是单个iovec的数据，且flags为0；writev可以看作是不定项数个iovec的数据，且flags为0；send可以看作是单个iovec的数据，且flags可以是send falgs表中任意值；sendto就是封装了send，多了flags值和sockaddr；sendmsg比较特殊，默认就构造了msghdr，直接发送到sock_sendmsg即可。
+
+{{< image classes="fancybox center fig-100" src="/socket/socket_linux_11.png" thumbnail="/socket/socket_linux_11.png" title="">}}
 
 # 3 源码中的socket
 
@@ -1679,3 +2337,7 @@ static void SplitByLines(const char* msg, const F& log_function, Args&&... args)
 [[18] a370352701, 人工智能 图解linux netlink, 2019.](https://www.dazhuanlan.com/a370352701/topics/1014749)
 
 [[19] Shining-LY, poll方法的基本概念, 2018.](https://blog.csdn.net/qq_37964547/article/details/80697530)
+
+[[20] linuxheik, writev, 2017.](https://blog.csdn.net/linuxheik/article/details/76125411)
+
+[[21] yunfan188, Linux网络编程 - 多种 I/O 函数(send、recv、readv、writev), 2022.](https://blog.csdn.net/u010429831/article/details/122452030)

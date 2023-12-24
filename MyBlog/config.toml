@@ -39,7 +39,7 @@ canonifyurls = true							# 設為 true 讓全站資源網址都套用
   #gravatarEmail = "thibaud.lepretre@gmail.com"
   # Your profile picture
   # Overwritten by your gravatar image if `author.gravatarEmail` is filled
-  picture = "https://img-blog.csdnimg.cn/20210711204627625.jpg"
+  picture = "thumb/20210711204627625.jpg"
   # Your Twitter username without the @. E.g : thibaudlepretre
   # twitter = "thibaudlepretre"
   # Your google plus profile id. E.g : +ThibaudLepretre or 114625208755123718311
@@ -243,4 +243,9 @@ canonifyurls = true							# 設為 true 讓全站資源網址都套用
   # Customize copyright value "© 2017 <CUSTOMIZATION>. All Rights Reserved"
   # [params.footer]
   #   copyright = "<a href=\"https://github.com/kakawait\">kakawait</a>"
+  
+  [markup.tableOfContents]
+    endLevel = 3
+    ordered = false
+    startLevel = 1
 

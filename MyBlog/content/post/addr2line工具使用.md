@@ -13,6 +13,9 @@ categories:
 - December
 tags:
 - Android
+- native
+- kernel
+- dump_stack
 - 调试工具
 showSocial: false
 ---
@@ -28,7 +31,7 @@ Android中有一些常见的调试技巧，比如addr2line，用于将函数地�
 
 除了本来**动态库**之外，应用到**进程**也是可行的
 
-# 1使用
+# 1native使用
 
 |          参数           |                             解释                             |
 | :---------------------: | :----------------------------------------------------------: |
@@ -122,5 +125,79 @@ int main()
     printf("--->>>div(%d)", div);
     return 0;
 }
+```
+
+# 2kernel使用
+
+一定要找对应的系统可执行文件和vmlinux
+
+## 2.1获取函数名的符号地址
+
+> 在kernel崩溃时，方便定位代码。
+>
+> 需要打开kernel配置**CONFIG_DEBUG_INFO**。
+>
+> 需要有System.map和vmlinux文件，一般在out目录。
+
+```shell
+[<ffffff9d17e832d0>] el1_da+0x24/0x3c
+```
+
+解释如下：
+
+函数el1_da汇编代码偏移0x24位置，函数总长度0x3c。
+
+```shell
+//64位：
+prebuilts/gcc/linux-x86/aarch64/aarch64-linux-gnu-6.3.1/bin/aarch64-linux-gnu-nm out/target/product/tb8788p1_64_wifi/obj/KERNEL_OBJ/vmlinux | grep el1_da
+
+//32位：
+prebuilts/gcc/linux-x86/arm/arm-eabi-4.8/bin/arm-eabi-nm  out/target/product/iot_1_item/obj/KERNEL_OBJ/vmlinux | grep el1_da
+```
+
+计算符号结果
+
+```shell
+ffffff80080832ac t el1_da
+```
+
+## 2.2计算地址
+
+则计算后的地址ffffff80080832ac + 24 = 目标地址
+
+```
+//ffffff80080832ac + 24 = ffffff80080832d0
+prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-addr2line -Cfe out/target/product/tb8788p1_64_wifi/obj/KERNEL_OBJ/vmlinux FFFFFF80080832D0
+```
+
+最终结果
+
+```shell
+el1_ia
+kernel-4.14/arch/arm64/kernel/entry.S:606
+```
+
+# 3补充
+
+关于**linux kernel**打印堆栈，具体可以点击[这里](https://blog.csdn.net/zhaojia92/article/details/102642719)
+
+在kernel代码的任意位置直接调用dump_stack方法即可。dump_stack已经包含在内核符号表中，并在include/linux/kernel.h中被声明。获取栈信息的原理是使用ebp逐层回溯。
+
+```c
+/*
+ * The architecture-independent dump_stack generator
+ */
+void dump_stack(void)
+{
+	unsigned long stack;
+ 
+	printk("Pid: %d, comm: %.20s %s %s %.*s\n",
+		current->pid, current->comm, print_tainted(),
+		init_utsname()->release,
+		(int)strcspn(init_utsname()->version, " "),
+		init_utsname()->version);
+	show_trace(current, NULL, &stack);
+}
+EXPORT_SYMBOL(dump_stack);
 ```
 

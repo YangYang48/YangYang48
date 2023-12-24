@@ -157,7 +157,7 @@ void PropertyInit() {
 
 ### 1.1创建属性文件，用于序列化操作
 
-首先在设备中创建`/dev/__properties`__，这个目录后续会对其进行**序列化**。
+首先在设备中创建`/dev/__properties__`，这个目录后续会对其进行**序列化**。
 
 ```c++
 //system/core/init/property_service.cpp
@@ -1939,7 +1939,7 @@ int SystemProperties::Update(prop_info* pi, const char* value, unsigned int len)
   }
   //同前面一样  
   prop_area* pa = contexts_->GetPropAreaForName(pi->name);
-  //找到prop_info中的serial
+  //找到prop_info中的serial，这里的组成是 value长度(8位) + 更新或者添加*2(24位)
   uint32_t serial = atomic_load_explicit(&pi->serial, memory_order_relaxed);
   //SERIAL_VALUE_LEN这个操作是右移运算，右移32位，得到value的长度
   unsigned int old_len = SERIAL_VALUE_LEN(serial);
@@ -1952,7 +1952,7 @@ int SystemProperties::Update(prop_info* pi, const char* value, unsigned int len)
   //更新value的值  
   strlcpy(pi->value, value, len + 1);
   atomic_thread_fence(memory_order_release);
-  //serial,这里的prop_info中的serial，前八位是value的长度，后32位为序列数，如果开始更新则为奇数，更新完成则为偶数
+  //serial,这里的prop_info中的serial，前8位是value的长度，后24位为序列数，如果开始更新则为奇数，更新完成则为偶数
   atomic_store_explicit(&pi->serial, (len << 24) | ((serial + 1) & 0xffffff), memory_order_relaxed);
   __futex_wake(&pi->serial, INT32_MAX);  // Fence by side effect
   //只要有操作update的函数，就会对serial_pa中的serial_加1
@@ -1966,11 +1966,94 @@ int SystemProperties::Update(prop_info* pi, const char* value, unsigned int len)
 }
 ```
 
-每次`Update`的时候，会更新几处地方，第一`prop_info`的`value`会更新，第二`prop_info`的`serial`会更新，前八位是新`value`的长度，后32位记录数值，这个数值是被修改次数的2倍，如果为奇数，说明这个`value`正在写入`prop_info`中。第三，会更新`/dev/__properties__/properties_serial`所在的`prop_area`中的`serial_`值，目前有两种情况会变化，`Update`和`Add`的时候，都会增加1。
+每次`Update`的时候，会更新几处地方
 
-下面举例说明，在总共只有三个属性的情况下，对于`aaudio.hw_burst_min_usec`这个属性中，第一次更新了一次属性，那么`prop_info`中的`serial`为`0x04000002`，并且`/dev/__properties__/properties_serial`所在的`prop_area`中的`serial_`值为4。
+1. `prop_info`的`value`会更新
+2. `prop_info`的`serial`会更新，前8位是新`value`的长度，后24位记录数值，这个数值是被修改次数的2倍，如果为奇数，说明这个`value`正在写入`prop_info`中
+3. 会更新`/dev/__properties__/properties_serial`所在的`prop_area`中的`serial_`值，目前有两种情况会变化，`Update`和`Add`的时候，都会增加1。
 
-{{< image classes="fancybox center fig-100" src="/property/property_23.png" thumbnail="/property/property_23.png" title="">}}
+下面举例说明，在总共只有三个属性的情况下，对于`aaudio.hw_burst_min_usec`这个属性中，第一次更新了一次属性，那么`prop_info`中的`serial`为`0x04000004`(前8位的4是`value`的长度4，后32位的4指的是(`Add`+`Update`)*2)，并且`/dev/__properties__/properties_serial`所在的`prop_area`中的`serial_`值为4。
+
+{{< image classes="fancybox center fig-100" src="/property/property_36.png" thumbnail="/property/property_36.png" title="">}}
+
+> 补充关于Android属性中的脏区，**主要为了防止多线程时候发生读写错误**。
+>
+> 脏区在属性系统中只有两处地方调用和一处地方定义。
+>
+> 1）一处读取
+>
+> ```c++
+> //bionic/libc/system_properties/system_properties.cpp
+> uint32_t SystemProperties::ReadMutablePropertyValue(const prop_info* pi, char* value) {
+>   //获取prop_info中的serial  
+>   uint32_t new_serial = load_const_atomic(&pi->serial, memory_order_acquire);
+>   uint32_t serial;
+>   unsigned int len;
+>   for (;;) {
+>     serial = new_serial;
+>     //获取前8位的值
+>     len = SERIAL_VALUE_LEN(serial);
+>     //如果serial为奇数，那么读取脏区内容拷贝到value变量，反之直接拷贝prop_info中的value值到value变量  
+>     if (__predict_false(SERIAL_DIRTY(serial))) {
+>       prop_area* pa = contexts_->GetPropAreaForName(pi->name);
+>       memcpy(value, pa->dirty_backup_area(), len + 1);
+>     } else {
+>       memcpy(value, pi->value, len + 1);
+>     }
+>     atomic_thread_fence(memory_order_acquire);
+>     new_serial = load_const_atomic(&pi->serial, memory_order_relaxed);
+>     if (__predict_true(serial == new_serial)) {
+>       break;
+>     }
+>     atomic_thread_fence(memory_order_acquire);
+>   }
+>   return serial;
+> }
+> ```
+>
+> 2）一处写入
+>
+> 详见上述`SystemProperties::Update`，每次更新都会调用。
+>
+> ```c++
+> memcpy(pa->dirty_backup_area(), pi->value, old_len + 1);
+> ```
+>
+> 3）一处声明
+>
+> ```c++
+> //bionic/libc/system_properties/include/system_properties/prop_area.h
+> char* dirty_backup_area() {
+>     return data_ + sizeof (prop_bt);
+> }
+> ```
+>
+> 关于`memcpy`如果第三个参数小于目标区域，正常把内容拷贝；如果第三个参数大于目前区域，会发生`memcpy`内存越界，造成段错误。这里所谓的"**脏区**"，就是`prop_bt`后面的空间。可以在`map_prop_area_rw`中知道，每一个`prop_area`定义的共享内存大小都为128k，所以**拷贝到脏区不会内存越界**。因此，保证传入的`value`大小小于92长度，必定能保证目前区域有足够的空间。
+>
+> ```c++
+> //bionic/libc/system_properties/prop_area.cpp
+> prop_area* prop_area::map_prop_area_rw(const char* filename, const char* context,
+>                                        bool* fsetxattr_failed) {
+>   const int fd = open(filename, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_EXCL, 0444);
+>   ...
+>   //PA_SIZE大小为128k，sizeof(prop_area)为124字节，pa_data_size_大小为128k-124
+>   pa_size_ = PA_SIZE;
+>   pa_data_size_ = pa_size_ - sizeof(prop_area);
+> 
+>   void* const memory_area = mmap(nullptr, pa_size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+>   if (memory_area == MAP_FAILED) {
+>     close(fd);
+>     return nullptr;
+>   }
+> 
+>   prop_area* pa = new (memory_area) prop_area(PROP_AREA_MAGIC, PROP_AREA_VERSION);
+> 
+>   close(fd);
+>   return pa;
+> }
+> ```
+
+
 
 ##### 2.3.2.3.3__system_property_add
 
@@ -3216,7 +3299,7 @@ void ActionManager::QueueEventTrigger(const std::string& trigger) {
 
 # 总结
 
-本文主要对属性系统的初始化原理`PropertyInit`、`StartPropertyService`，获取属性、设置属性和属性变化这五个方面来展开详解，围绕着属性，`SElinux`，`mmap`，共享内存，匿名私有内存，`Trie`，`rc文件`，`persist`属性做了一个流程的介绍和分析。总的来说，属性看起来简单，内部机制还是比较复杂的。特别是由于笔者水平有限，关于设置属性的脏区和属性变化的介绍不够深入，这个需要读者发挥自己的主观能动性进一步完善。
+本文主要对属性系统的初始化原理`PropertyInit`、`StartPropertyService`，获取属性、设置属性和属性变化这五个方面来展开详解，围绕着属性，`SElinux`，`mmap`，共享内存，匿名私有内存，`Trie`，`rc文件`，`persist`属性做了一个流程的介绍和分析。总的来说，属性看起来简单，内部机制还是比较复杂的。特别是由于笔者水平有限，可能属性系统某些细节的介绍不够深入，这个需要读者发挥自己的主观能动性进一步完善。
 
 
 
